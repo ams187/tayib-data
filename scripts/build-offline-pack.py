@@ -13,7 +13,7 @@ import time
 import zlib
 
 LIMIT = 100_000
-FIELDS = ['code', 'product_name', 'product_name_fr', 'brands', 'allergens_tags', 'traces_tags', 'emb_codes_tags',
+FIELDS = ['code', 'product_name', 'product_name_fr', 'brands', 'allergens_tags', 'traces_tags', 'emb_codes_tags', 'origins_tags', 'manufacturing_places_tags',
           'ingredients_text', 'ingredients_text_fr', 'nutriscore_grade', 'nova_group', 'environmental_score_grade',
           'additives_tags', 'categories_tags', 'labels_tags', 'packaging_materials_tags', 'serving_quantity', 'last_modified_t']
 INGREDIENT_KEYS = ('id', 'text', 'vegan', 'vegetarian', 'percent', 'percent_estimate', 'from_palm_oil', 'additive_class')
