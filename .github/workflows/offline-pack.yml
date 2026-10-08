@@ -20,9 +20,13 @@ jobs:
           curl -sSfL https://static.openfoodfacts.org/data/openfoodfacts-products.jsonl.gz | gzip -dc \
             | grep -F '"en:france"' | python3 scripts/build-offline-pack.py offline-pack.db
           ls -la offline-pack.db
-      - name: Publish as the « latest » release
+      - name: Publish as a new release (never a moment without a pack)
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release view latest >/dev/null 2>&1 || gh release create latest --title "Offline pack" --notes "Weekly build. Data © Open Food Facts contributors, ODbL."
-          gh release upload latest offline-pack.db --clobber
+          # The app downloads releases/latest/download/offline-pack.db: it switches to this release only once
+          # it is published with its file, and the previous one stays until the next week.
+          tag="pack-$(date -u +%Y%m%d-%H%M)"
+          gh release create "$tag" offline-pack.db --title "Offline pack $(date -u +%Y-%m-%d)" --notes "The 100,000 most-scanned products in France, without photos. Data © Open Food Facts contributors, ODbL."
+          gh release list --limit 100 --json tagName,createdAt --jq 'sort_by(.createdAt) | reverse | .[2:] | .[].tagName' \
+            | xargs -r -n1 gh release delete --cleanup-tag --yes
