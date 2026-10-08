@@ -1,0 +1,28 @@
+name: Offline pack
+
+on:
+  schedule:
+    - cron: '0 4 * * 1' # every Monday, after Open Food Facts' daily dump
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build the pack from the Open Food Facts dump
+        run: |
+          set -o pipefail
+          curl -sSfL https://static.openfoodfacts.org/data/openfoodfacts-products.jsonl.gz | gzip -dc \
+            | grep -F '"en:france"' | python3 scripts/build-offline-pack.py offline-pack.db
+          ls -la offline-pack.db
+      - name: Publish as the « latest » release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view latest >/dev/null 2>&1 || gh release create latest --title "Offline pack" --notes "Weekly build. Data © Open Food Facts contributors, ODbL."
+          gh release upload latest offline-pack.db --clobber
