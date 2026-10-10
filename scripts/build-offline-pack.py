@@ -1,8 +1,10 @@
-"""Offline pack, as Yuka does: the 100,000 most-scanned products sold in France, without photos.
+"""Offline packs, as Yuka does: per country, the 100,000 most-scanned products sold there, without photos.
 
-Streams the Open Food Facts JSONL dump (ODbL) and writes a SQLite file the app downloads:
+Streams the Open Food Facts JSONL dump (ODbL) once and writes one SQLite file per country the app downloads:
   curl -sL https://static.openfoodfacts.org/data/openfoodfacts-products.jsonl.gz | gzip -dc \
-    | grep -F '"en:france"' | python3 scripts/build-offline-pack.py offline-pack.db
+    | python3 scripts/build-offline-pack.py out FR=en:france GB=en:united-kingdom ...
+France is out/offline-pack.db, the others out/offline-pack-<cc>.db. The countries built are printed on stdout:
+they are the ones listed in OFFLINE_COUNTRIES (src/lib/region.ts).
 Rows are raw-deflated with a shared dictionary (meta.dictionary). Each row keeps only the fields `parseProduct` (src/lib/open-food-facts.ts) reads, in the API v3.4 shape.
 """
 import heapq
@@ -59,26 +61,13 @@ def slim(product):
     return row
 
 
-def main(path):
-    top = []  # min-heap of (scans, code, json)
-    for line in sys.stdin:
-        try:
-            product = json.loads(line)
-        except ValueError:
-            continue
-        scans = product.get('unique_scans_n') or 0
-        code = product.get('code')
-        if not scans or not code or 'en:france' not in (product.get('countries_tags') or []):
-            continue
-        if not (product.get('product_name_fr') or product.get('product_name')):
-            continue
-        if len(top) == LIMIT and scans <= top[0][0]:
-            continue
-        entry = (scans, code, json.dumps(slim(product), ensure_ascii=False, separators=(',', ':')))
-        (heapq.heapreplace if len(top) == LIMIT else heapq.heappush)(top, entry)
+MIN_PRODUCTS = 2_000  # below this a pack would disappoint: the country gets no offline mode (nothing advertises it)
 
+
+def write_pack(path, top):
     # A dictionary of typical rows makes each tiny row compress ~5x instead of ~3x.
-    sample = [data.encode() for _, _, data in top[::max(1, len(top) // 400)]]
+    rows = [(code, zlib.decompress(packed).decode()) for _, code, packed in top]
+    sample = [data.encode() for _, data in rows[::max(1, len(rows) // 400)]]
     dictionary = b''.join(sample)[-32768:]
 
     def deflate(data):
@@ -89,13 +78,49 @@ def main(path):
     db.executescript('DROP TABLE IF EXISTS products; DROP TABLE IF EXISTS meta;'
                      'CREATE TABLE products (code TEXT PRIMARY KEY, data BLOB NOT NULL) WITHOUT ROWID;'
                      'CREATE TABLE meta (key TEXT PRIMARY KEY, value NOT NULL);')
-    db.executemany('INSERT OR REPLACE INTO products VALUES (?, ?)', [(code, deflate(data)) for _, code, data in top])
-    db.executemany('INSERT INTO meta VALUES (?, ?)', [('built_at', str(int(time.time() * 1000))), ('count', str(len(top))), ('dictionary', dictionary)])
+    db.executemany('INSERT OR REPLACE INTO products VALUES (?, ?)', [(code, deflate(data)) for code, data in rows])
+    db.executemany('INSERT INTO meta VALUES (?, ?)', [('built_at', str(int(time.time() * 1000))), ('count', str(len(rows))), ('dictionary', dictionary)])
     db.commit()
     db.execute('VACUUM')
     db.close()
-    print(f'{len(top)} products, least scanned kept: {top[0][0] if top else 0}', file=sys.stderr)
+
+
+def main(out_dir, countries):
+    """countries: {'FR': 'en:france', ...}. One pass over the dump builds every country's pack."""
+    by_tag = {tag: cc for cc, tag in countries.items()}
+    tops = {cc: [] for cc in countries}  # per country, a min-heap of (scans, code, zlib(json))
+    for line in sys.stdin:
+        try:
+            product = json.loads(line)
+        except ValueError:
+            continue
+        scans = product.get('unique_scans_n') or 0
+        code = product.get('code')
+        markets = [by_tag[tag] for tag in (product.get('countries_tags') or []) if tag in by_tag]
+        if not scans or not code or not markets:
+            continue
+        if not (product.get('product_name_fr') or product.get('product_name')):
+            continue
+        packed = None
+        for cc in markets:
+            top = tops[cc]
+            if len(top) == LIMIT and scans <= top[0][0]:
+                continue
+            # Kept compressed in memory: every country's heap lives at once.
+            packed = packed or zlib.compress(json.dumps(slim(product), ensure_ascii=False, separators=(',', ':')).encode(), 1)
+            (heapq.heapreplace if len(top) == LIMIT else heapq.heappush)(top, (scans, code, packed))
+
+    built = []
+    for cc, top in tops.items():
+        if len(top) < MIN_PRODUCTS:
+            print(f'{cc}: {len(top)} products, no pack', file=sys.stderr)
+            continue
+        name = 'offline-pack.db' if cc == 'FR' else f'offline-pack-{cc.lower()}.db'
+        write_pack(f'{out_dir}/{name}', top)
+        built.append(cc)
+        print(f'{cc}: {len(top)} products, least scanned kept: {top[0][0]}', file=sys.stderr)
+    print(' '.join(built))
 
 
 if __name__ == '__main__':
-    main(sys.argv[1])
+    main(sys.argv[1], dict(arg.split('=', 1) for arg in sys.argv[2:]))

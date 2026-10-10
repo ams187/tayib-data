@@ -14,19 +14,60 @@ jobs:
     timeout-minutes: 240
     steps:
       - uses: actions/checkout@v4
-      - name: Build the pack from the Open Food Facts dump
+      - name: Build every country's pack in one pass over the Open Food Facts dump
         run: |
           set -o pipefail
+          mkdir -p out
+          # Countries of src/lib/region.ts (OFF_COUNTRIES). Those with too few products get no pack.
           curl -sSfL https://static.openfoodfacts.org/data/openfoodfacts-products.jsonl.gz | gzip -dc \
-            | grep -F '"en:france"' | python3 scripts/build-offline-pack.py offline-pack.db
-          ls -la offline-pack.db
+            | python3 scripts/build-offline-pack.py out \
+            FR=en:france \
+            BE=en:belgium \
+            CH=en:switzerland \
+            LU=en:luxembourg \
+            MC=en:monaco \
+            GB=en:united-kingdom \
+            IE=en:ireland \
+            DE=en:germany \
+            AT=en:austria \
+            NL=en:netherlands \
+            ES=en:spain \
+            PT=en:portugal \
+            IT=en:italy \
+            DK=en:denmark \
+            SE=en:sweden \
+            NO=en:norway \
+            FI=en:finland \
+            PL=en:poland \
+            CZ=en:czech-republic \
+            RO=en:romania \
+            GR=en:greece \
+            US=en:united-states \
+            CA=en:canada \
+            AU=en:australia \
+            NZ=en:new-zealand \
+            MA=en:morocco \
+            DZ=en:algeria \
+            TN=en:tunisia \
+            SN=en:senegal \
+            CI=en:cote-d-ivoire \
+            TR=en:turkey \
+            AE=en:united-arab-emirates \
+            SA=en:saudi-arabia \
+            QA=en:qatar \
+            EG=en:egypt \
+            MY=en:malaysia \
+            ID=en:indonesia \
+            SG=en:singapore \
+            | tee built.txt
+          ls -la out
       - name: Publish as a new release (never a moment without a pack)
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          # The app downloads releases/latest/download/offline-pack.db: it switches to this release only once
+          # The app downloads releases/latest/download/offline-pack[-<cc>].db: it switches to this release only once
           # it is published with its file, and the previous one stays until the next week.
           tag="pack-$(date -u +%Y%m%d-%H%M)"
-          gh release create "$tag" offline-pack.db --title "Offline pack $(date -u +%Y-%m-%d)" --notes "The 100,000 most-scanned products in France, without photos. Data © Open Food Facts contributors, ODbL."
+          gh release create "$tag" out/*.db --title "Offline packs $(date -u +%Y-%m-%d)" --notes "Per country, the 100,000 most-scanned products sold there, without photos (France: offline-pack.db, others: offline-pack-<cc>.db). Countries: $(cat built.txt). Data © Open Food Facts contributors, ODbL."
           gh release list --limit 100 --json tagName,createdAt --jq 'sort_by(.createdAt) | reverse | .[2:] | .[].tagName' \
             | xargs -r -n1 gh release delete --cleanup-tag --yes
